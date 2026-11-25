@@ -4,7 +4,14 @@ import { gameProfiles } from './game-profiles';
 export type Phase = 'down' | 'up';
 export interface Impact {
   notes?: { frequency: number; at: number; duration: number; wave: OscillatorType; endFrequency?: number }[];
+  /** [freq, amp, decay?, endFreq?] */
   modes: number[][];
+  /** [freq, amp, decay, Q] perceptual broadband noise bands */
+  bands?: number[][];
+  /** [at, gain, pitchRatio, brightRatio] multi-hit sub-events */
+  events?: number[][];
+  attack?: number;
+  snap?: number;
   decay: number;
   brightness: number;
   noise: number;
@@ -12,7 +19,7 @@ export interface Impact {
   level: number;
 }
 export interface Profile { id: string; name: string; samples: number; down: Impact; up: Impact }
-export const profiles: Profile[] = [...rawProfiles, ...gameProfiles];
+export const profiles: Profile[] = [...(rawProfiles as Profile[]), ...gameProfiles];
 export interface Parameters {
   pitch: number; decay: number; brightness: number; body: number; noise: number;
   snap: number; bounce: number; variation: number; volume: number;
@@ -50,84 +57,181 @@ function outputStage(ctx: BaseAudioContext, destination: AudioNode): GainNode {
   input.connect(limiter).connect(destination);
   return input;
 }
+function scheduledEvents(spec: Impact, p: Parameters): [number, number, number, number][] {
+  if (!spec.events?.length) return [[0, 1, 1, 1]];
+  let primaryIdx = 0;
+  for (let i = 1; i < spec.events.length; i++) if (spec.events[i][1] > spec.events[primaryIdx][1]) primaryIdx = i;
+  if (p.bounce <= 0) {
+    const [, g, pr = 1, br = 1] = spec.events[primaryIdx];
+    return [[0, g, pr, br]];
+  }
+  const primaryAt = spec.events[primaryIdx][0];
+  const raw = spec.events.map(([at, gain, pr = 1, br = 1], i): [number, number, number, number] => {
+    const rel = (at - primaryAt) * p.bounce;
+    const scaledAt = primaryAt + rel;
+    const scaledGain = i === primaryIdx ? gain : gain * Math.min(1.6, p.bounce);
+    return [scaledAt, scaledGain, pr, br];
+  });
+  const minAt = Math.min(...raw.map(e => e[0]));
+  return raw.map(([at, g, pr, br]) => [Math.max(0, at - minAt), g, pr, br]);
+}
 export function duration(profile: Profile, phase: Phase, p: Parameters) {
-  const notes = profile[phase].notes;
-  if (notes?.length) return Math.max(...notes.map(n => n.at * Math.sqrt(p.decay) + n.duration * p.decay * 1.25)) + profile[phase].bounce * p.bounce + .04;
-  return Math.max(.06, profile[phase].decay * p.decay * 9 + profile[phase].bounce * p.bounce + .035);
+  const spec = profile[phase];
+  if (spec.notes?.length) return Math.max(...spec.notes.map(n => n.at * Math.sqrt(p.decay) + n.duration * p.decay * 1.25)) + spec.bounce * p.bounce + .04;
+  const maxEvent = Math.max(0, ...scheduledEvents(spec, p).map(e => e[0]));
+  const taus = [spec.decay, ...spec.modes.map(m => m[2] ?? spec.decay), ...(spec.bands ?? []).map(b => b[2] ?? spec.decay)];
+  const maxTau = Math.max(.004, ...taus);
+  const atk = Math.min(.025, (spec.attack ?? .0004) * 1.8);
+  return Math.max(.05, maxEvent + atk + maxTau * p.decay * 7.8 + .025);
 }
 
-/** Native oscillators + filtered, generated noise. No recorded buffers involved. */
+/** Native oscillators + multi-band filtered, generated noise. No recorded buffers involved. */
 export function scheduleImpact(ctx: BaseAudioContext, destination: AudioNode, profile: Profile, phase: Phase, params: Parameters, time: number, seed: number) {
   const p = sanitize(params), spec = profile[phase], rng = random(seed);
   const nodes: AudioNode[] = [];
   const keep = <T extends AudioNode>(n: T): T => { nodes.push(n); return n; };
   const varied = 1 + (rng() * 2 - 1) * p.variation;
   const pitch = 2 ** (p.pitch / 12) * varied;
-  const decay = spec.decay * p.decay * (1 + (rng() - .5) * p.variation);
+  const decayScale = p.decay * (1 + (rng() - .5) * p.variation);
   const length = duration(profile, phase, p);
+  const nyq = ctx.sampleRate * .44;
+
   const bus = keep(ctx.createGain());
-  bus.gain.value = spec.level * p.volume * .8;
-  bus.connect(destination);
-  const envelope = (at: number, life: number, amplitude: number) => {
+  bus.gain.value = spec.level * p.volume * (spec.notes ? .8 : 1);
+  if (!spec.notes && p.brightness < .98) {
+    const tone = keep(ctx.createBiquadFilter());
+    tone.type = 'lowpass'; tone.Q.value = .65;
+    tone.frequency.value = Math.max(220, Math.min(nyq, 18000 * p.brightness * p.brightness));
+    bus.connect(tone).connect(destination);
+  } else {
+    bus.connect(destination);
+  }
+
+  const expEnvelope = (at: number, tau: number, amplitude: number, attackSec: number) => {
     const gain = keep(ctx.createGain());
+    const amp = Math.max(.000001, amplitude);
+    const atk = Math.max(.00012, Math.min(.025, attackSec));
+    const life = Math.max(.002, Math.min(length - (at - time) - atk - .004, tau * 7.13));
     gain.gain.setValueAtTime(0, at);
-    gain.gain.linearRampToValueAtTime(Math.max(.000001, amplitude), at + .0007);
-    gain.gain.exponentialRampToValueAtTime(.00001, at + Math.max(.002, life));
-    gain.gain.linearRampToValueAtTime(0, at + Math.max(.002, life) + .002);
+    gain.gain.linearRampToValueAtTime(amp, at + atk);
+    gain.gain.exponentialRampToValueAtTime(Math.max(.000001, amp * .0008), at + atk + life);
+    gain.gain.linearRampToValueAtTime(0, at + atk + life + .002);
     gain.connect(bus);
-    return gain;
+    return { gain, end: at + atk + life + .004 };
   };
-  const strike = (at: number, strength: number) => {
-    if (spec.notes) {
+
+  // Game cues: authored note sequences with square/triangle/sawtooth/sine oscillators.
+  if (spec.notes) {
+    const strikeGame = (at: number, strength: number) => {
       const filter = keep(ctx.createBiquadFilter());
       filter.type = 'lowpass'; filter.Q.value = .7;
-      filter.frequency.value = Math.min(ctx.sampleRate * .44, spec.brightness * p.brightness);
+      filter.frequency.value = Math.min(nyq, spec.brightness * p.brightness);
       const toneBus = keep(ctx.createGain()); toneBus.connect(filter).connect(bus);
-      const concurrent = Math.max(1, ...spec.notes.map(n => spec.notes!.filter(m => m.at <= n.at && m.at + m.duration > n.at).length));
-      for (const n of spec.notes) {
+      const concurrent = Math.max(1, ...spec.notes!.map(n => spec.notes!.filter(m => m.at <= n.at && m.at + m.duration > n.at).length));
+      for (const n of spec.notes!) {
         const start = at + n.at * Math.sqrt(p.decay);
-        const life = Math.max(.006, n.duration * decay / spec.decay);
-        const oscillator = keep(ctx.createOscillator()); oscillator.type = n.wave;
-        const hz = (f: number) => Math.max(30, Math.min(ctx.sampleRate * .43, f * pitch));
-        oscillator.frequency.setValueAtTime(hz(n.frequency), start);
-        if (n.endFrequency) oscillator.frequency.exponentialRampToValueAtTime(hz(n.endFrequency), start + life);
-        const gain = envelope(start, life, strength * p.body * .9 / Math.sqrt(concurrent));
-        gain.disconnect(); gain.connect(toneBus);
-        oscillator.connect(gain); oscillator.start(start); oscillator.stop(start + life + .004);
+        const life = Math.max(.006, n.duration * decayScale);
+        const osc = keep(ctx.createOscillator()); osc.type = n.wave;
+        const hz = (f: number) => Math.max(30, Math.min(nyq, f * pitch));
+        osc.frequency.setValueAtTime(hz(n.frequency), start);
+        if (n.endFrequency) osc.frequency.exponentialRampToValueAtTime(hz(n.endFrequency), start + life);
+        const gain = keep(ctx.createGain());
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(Math.max(.000001, strength * p.body * .9 / Math.sqrt(concurrent)), start + .0007);
+        gain.gain.exponentialRampToValueAtTime(.00001, start + life);
+        gain.gain.linearRampToValueAtTime(0, start + life + .002);
+        gain.connect(toneBus);
+        osc.connect(gain); osc.start(start); osc.stop(start + life + .004);
+      }
+      if (spec.noise > 0 && p.noise > 0) {
+        const nLife = Math.min(length - .004, Math.max(.006, spec.decay * decayScale * 3));
+        const buf = ctx.createBuffer(1, Math.ceil((nLife + .004) * ctx.sampleRate), ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = rng() * 2 - 1;
+        const src = keep(ctx.createBufferSource()); src.buffer = buf;
+        const low = keep(ctx.createBiquadFilter()); low.type = 'lowpass'; low.Q.value = .7;
+        low.frequency.value = Math.min(nyq, spec.brightness * p.brightness * pitch);
+        const { gain, end } = expEnvelope(at, nLife / 5, strength * spec.noise * p.noise * 1.4, .0005);
+        src.connect(low).connect(gain); src.start(at); src.stop(end);
+      }
+    };
+    strikeGame(time, 1);
+    if (spec.bounce > 0 && p.bounce > 0) strikeGame(time + spec.bounce * p.bounce, Math.min(.6, p.bounce * .25));
+    return { end: time + length + .02, disconnect: () => nodes.forEach(n => n.disconnect()) };
+  }
+
+  // Acoustic button synthesis: damped modal oscillators + multi-band shaped noise + multi-event hits.
+  const bodyGain = p.body / defaults.body;
+  const baseAttack = (spec.attack ?? .0003) * (1.8 - p.snap * 1.6);
+  const tilt = (hz: number, brightMul: number) => {
+    const b = p.brightness * brightMul;
+    if (Math.abs(b - 1) < .005) return 1;
+    return Math.max(.06, Math.min(3.2, Math.pow(Math.max(.08, hz / 1000), Math.log2(b) * .48)));
+  };
+
+  const strike = (at: number, strength: number, evPitch: number, evBright: number) => {
+    if (strength <= .0005) return;
+
+    // 1. Damped resonant modes with per-mode decay & optional pitch sweep.
+    for (const m of spec.modes) {
+      const [freq, amp, modeDecay, endFreq] = m;
+      const hz = Math.max(25, Math.min(nyq, freq * pitch * evPitch));
+      const tau = Math.max(.0015, (modeDecay ?? spec.decay) * decayScale);
+      const modeAmp = strength * bodyGain * amp * Math.SQRT2 * tilt(hz, evBright);
+      if (modeAmp < .0005) continue;
+      const osc = keep(ctx.createOscillator());
+      osc.type = 'sine';
+      if (endFreq) {
+        osc.frequency.setValueAtTime(hz, at);
+        osc.frequency.exponentialRampToValueAtTime(Math.max(25, Math.min(nyq, endFreq * pitch * evPitch)), at + Math.min(tau * 2.5, .06));
+      } else if (p.snap > .5 && (spec.snap ?? 0) > .1) {
+        const drop = (p.snap - .5) * (spec.snap ?? .3) * .25;
+        osc.frequency.setValueAtTime(Math.min(nyq, hz * (1 + drop)), at);
+        osc.frequency.exponentialRampToValueAtTime(hz, at + .0035);
+      } else {
+        osc.frequency.setValueAtTime(hz, at);
+      }
+      const { gain, end } = expEnvelope(at, tau, modeAmp, baseAttack);
+      osc.connect(gain); osc.start(at); osc.stop(end);
+    }
+
+    // 2. Multi-band filtered procedural noise with ENBW gain calibration & per-band decay.
+    const bands = spec.bands ?? [];
+    if (bands.length && p.noise > 0) {
+      const maxBandTau = Math.max(...bands.map(b => b[2] ?? spec.decay)) * decayScale;
+      const noiseDur = Math.min(length - (at - time) - .002, maxBandTau * 7.2 + baseAttack + .008);
+      if (noiseDur > .003) {
+        const buffer = ctx.createBuffer(1, Math.max(64, Math.ceil(noiseDur * ctx.sampleRate)), ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = rng() * 2 - 1;
+        const source = keep(ctx.createBufferSource()); source.buffer = buffer;
+
+        for (const [bFreq, bAmp, bDecay, bQ = 1.3] of bands) {
+          const hz = Math.max(30, Math.min(nyq, bFreq * pitch * evPitch));
+          const tau = Math.max(.001, bDecay * decayScale);
+          // 4th-order bandpass (two cascaded biquads) gives steep -12 dB/oct skirts so low bands don't leak HF hiss.
+          const enbwRms = Math.sqrt(Math.max(.00005, Math.PI * hz / (6 * bQ * ctx.sampleRate)));
+          const enbwGain = Math.min(24, 1 / enbwRms);
+          const lowBody = hz < 450 ? (.4 + .6 * bodyGain) : 1;
+          const snapBoost = p.snap > .5 && tau <= .005 && hz >= 1200 ? (1 + (p.snap - .5) * .7) : 1;
+          const bandAmp = strength * p.noise * bAmp * enbwGain * lowBody * snapBoost * tilt(hz, evBright);
+          if (bandAmp < .0005) continue;
+          const bp1 = keep(ctx.createBiquadFilter()), bp2 = keep(ctx.createBiquadFilter());
+          bp1.type = 'bandpass'; bp1.frequency.value = hz; bp1.Q.value = bQ;
+          bp2.type = 'bandpass'; bp2.frequency.value = hz; bp2.Q.value = bQ;
+          // Shape excitation BEFORE the resonator so low bands ring naturally without startup loss.
+          const { gain } = expEnvelope(at, tau, bandAmp, baseAttack);
+          gain.disconnect();
+          source.connect(gain).connect(bp1).connect(bp2).connect(bus);
+        }
+        source.start(at); source.stop(at + noiseDur);
       }
     }
-    // Inharmonic resonant modes mimic the switch cap and housing.
-    const sum = spec.modes.reduce((s, m) => s + m[1], 0) || 1;
-    spec.modes.forEach(([frequency, weight], i) => {
-      const osc = keep(ctx.createOscillator());
-      const hz = Math.max(30, Math.min(ctx.sampleRate * .43, frequency * pitch));
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(Math.min(ctx.sampleRate * .45, hz * (1 + p.snap * .28)), at);
-      osc.frequency.exponentialRampToValueAtTime(hz, at + .007);
-      const life = Math.min(length - .004, decay * (i === 0 ? 7 : 4.5));
-      const shade = Math.min(1, spec.brightness * p.brightness / Math.max(1, hz));
-      osc.connect(envelope(at, life, strength * p.body * weight / sum * shade));
-      osc.start(at); osc.stop(at + life + .004);
-    });
-    // Fresh seeded excitation, shaped by a lowpass and a highpass.
-    const noiseLife = Math.min(length - .004, Math.max(.006, decay * 3));
-    const buffer = ctx.createBuffer(1, Math.ceil((noiseLife + .004) * ctx.sampleRate), ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = rng() * 2 - 1;
-    const source = keep(ctx.createBufferSource()); source.buffer = buffer;
-    const low = keep(ctx.createBiquadFilter()); low.type = 'lowpass'; low.Q.value = .7;
-    low.frequency.value = Math.min(ctx.sampleRate * .44, spec.brightness * p.brightness * pitch);
-    const high = keep(ctx.createBiquadFilter()); high.type = 'highpass'; high.frequency.value = Math.min(1500, 180 * pitch);
-    source.connect(low).connect(high).connect(envelope(at, noiseLife, strength * spec.noise * p.noise * 1.8));
-    source.start(at); source.stop(at + noiseLife + .004);
-    const click = keep(ctx.createOscillator()); click.type = 'triangle';
-    click.frequency.setValueAtTime(Math.min(ctx.sampleRate * .4, 3200 * pitch * p.brightness), at);
-    click.frequency.exponentialRampToValueAtTime(Math.max(40, 180 * pitch), at + .004);
-    click.connect(envelope(at, .005, strength * p.snap * .24));
-    click.start(at); click.stop(at + .008);
   };
-  strike(time, 1);
-  if (spec.bounce > 0 && p.bounce > 0) strike(time + spec.bounce * p.bounce, Math.min(.6, p.bounce * .25));
+
+  for (const [evAt, evGain, evPitch, evBright] of scheduledEvents(spec, p)) {
+    strike(time + evAt, evGain, evPitch, evBright);
+  }
   return { end: time + length + .02, disconnect: () => nodes.forEach(n => n.disconnect()) };
 }
 

@@ -56,9 +56,9 @@ button.addEventListener('pointerup', () => {
 
 ## How synthesis works
 
-Each impact combines six damped, inharmonic sine modes, a short burst of filtered procedural noise, a pitched transient, and an optional delayed secondary strike. The profile supplies the measured mode frequencies and relative weights, energy decay, spectral brightness, excitation balance, secondary impact delay, and level. Seeded perturbations vary tuning, decay, and noise excitation. No PCM from the recordings is stored in the profiles or used by synthesis.
+Each acoustic impact combines up to eight damped resonant sine modes (with individually measured per-mode decays and optional pitch sweeps), a 7-band 4th-order bandpass procedural noise bank spanning 35 Hz to 19.5 kHz (with equivalent noise bandwidth gain compensation and per-band decays), measured attack shaping, and multi-hit sub-event scheduling for double-clicks, latches, and trills. Seeded perturbations vary tuning, decay, and noise excitation. No PCM from the recordings is stored in the profiles or used by synthesis.
 
-The controls operate on this compact model, so fine texture, stereo imaging, complicated rattles, and long sequences in the bonus recording are approximated. Listening comparisons remain necessary for judging similarity; the tests verify signal generation and behavior, not perceptual fidelity.
+The controls operate on this compact model, so fine texture, stereo imaging, and subtle room acoustics are approximated while preserving each switch's spectral balance, decay envelope, and multi-event character.
 
 ## Regenerate the profiles
 
@@ -66,6 +66,6 @@ The controls operate on this compact model, so fine texture, stereo imaging, com
 pnpm analyze
 ```
 
-Requires Python 3 and `ffmpeg` on PATH. `scripts/analyze.py` downloads the upstream WAVs into the ignored `.cache/reference/` folder. It uses the documented sprite offsets (press at 1 s, 2 s, etc.; release 200 ms later), analyzes each variant, and selects a representative press/release profile. It extracts separated FFT peaks, energy-tail decay, spectral centroid, peak concentration, and secondary transients. The generated profiles are committed so running the app never requires this analysis step.
+Requires Python 3 and `ffmpeg` on PATH. `scripts/analyze.py` downloads the upstream WAVs into the ignored `.cache/reference/` folder and analyzes them at full 48 kHz bandwidth using the documented sprite offsets (press at 1 s, 2 s, etc.; release 200 ms later). It separates high-prominence tonal modes from broadband residual noise across seven perceptual sub-bands, measures per-mode and per-band exponential decay constants, detects pitch sweeps, and extracts multi-hit sub-events. The generated profiles are committed so running the app never requires this analysis step.
 
 Reference format: [upstream raw-audio documentation](https://github.com/joshwcomeau/button-sounds/blob/main/docs/raw-audio-files.md). Reference recordings are MIT licensed, copyright Josh Comeau. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
