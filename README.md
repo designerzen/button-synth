@@ -4,6 +4,8 @@ A procedural Web Audio sound lab inspired by [Josh Comeau’s Button Sounds](htt
 
 **[Open the live sound lab](https://designerzen.github.io/button-synth/)**
 
+The **Game sounds** category adds 10 original procedural cues for classic arcade and console interfaces: 8-bit Select, Arcade Confirm, Menu Back, Menu Error, Coin Pickup, Game Start, Power Up, Pause Blip, Console Confirm, and Pixel Toggle. These use square, triangle, sawtooth, and sine oscillators with authored note sequences, chords, and pitch sweeps. They have separate release cues and support all shaping controls, JSON presets, and WAV exports. They do not have reference recordings. There are 67 presets in total.
+
 ## GitHub Pages
 
 The `.github/workflows/pages.yml` workflow builds and deploys the site on every push to `main`, or when manually run from the Actions tab. It uses the pinned pnpm version from `package.json`, Node.js 24, and the committed lockfile. Repository Pages settings must use **GitHub Actions** as the source. Vite emits relative asset URLs so the build works under `/button-synth/`.
@@ -20,7 +22,7 @@ Open the local address printed by Vite. `pnpm build` type-checks and creates `di
 ## Sound lab
 
 - Select a preset, then press and hold the large button. Press and release produce separate sounds. Space and Enter work when the button has focus.
-- Adjust pitch, decay, brightness, body, noise texture, transient snap, mechanical bounce, variation, and output level. Bounce affects presets with a detected secondary impact. Controls apply to both press and release profiles.
+- Adjust pitch, decay, brightness, body, noise texture, transient snap, mechanical bounce, variation, and output level. Bounce affects presets with a detected secondary impact, or adds a short echo to game cues. Controls apply to both press and release profiles.
 - Switch to **Original** for A/B comparison. This downloads the selected recording from GitHub and auditions its first press/release pair. Synthesis needs no recordings or network connection once the app is loaded. Network failures leave synthesis available.
 - Select Press, Release, or Pair above the waveform to choose the preview and WAV export. Pair uses a 200 ms hold. The waveform seed gives repeatable procedural excitation; the seed button changes it. Native Web Audio implementations can have tiny floating point differences.
 - WAV exports are mono, 48 kHz, 16-bit PCM. They always contain the synthesized sound, including when Original mode is selected. Mute controls audition playback; exports retain the chosen output level.
@@ -28,7 +30,7 @@ Open the local address printed by Vite. `pnpm build` type-checks and creates `di
 
 ## Reuse the engine
 
-Copy `src/synth.ts` and `src/profiles.json` into a TypeScript browser project. The engine has no runtime dependencies and does not import the UI.
+Copy `src/synth.ts`, `src/game-profiles.ts`, and `src/profiles.json` into a TypeScript browser project. The engine has no runtime dependencies and does not import the UI.
 
 ```ts
 import { ButtonSynth } from './src/synth';

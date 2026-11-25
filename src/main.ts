@@ -23,8 +23,9 @@ try {
   params = saved[selected.id] || { ...defaults };
 } catch { /* A blocked or outdated local store must not stop the instrument. */ }
 
-const categories = ['All', 'Keyboards', 'Mice', 'Switches', 'Controllers', 'Electronic'];
+const categories = ['All', 'Game sounds', 'Keyboards', 'Mice', 'Switches', 'Controllers', 'Electronic'];
 function category(p: Profile) {
+  if (p.down.notes) return 'Game sounds';
   if (/kbd|halo|hi75|uhk/.test(p.id)) return 'Keyboards';
   if (/mouse|ergo|master|rival/.test(p.id)) return 'Mice';
   if (/ps5|iidx|sd-/.test(p.id)) return 'Controllers';
@@ -32,6 +33,7 @@ function category(p: Profile) {
   return 'Switches';
 }
 function title(p: Profile) {
+  if (p.down.notes) return p.name;
   const acronyms = new Set(['asus', 'kbd', 'mx', 'ps5', 'sd', 'uhk', 'kvm', 'led', 'iidx']);
   return p.id.split('-').map(s => acronyms.has(s) ? s.toUpperCase() : s === 'hi75' ? 'Hi75' : s[0].toUpperCase() + s.slice(1)).join(' ');
 }
@@ -49,9 +51,9 @@ const controls: { key: keyof Parameters; name: string; hint: string; step: numbe
 $('#app').innerHTML = `
   <header class="topbar"><a class="brand" href="./"><span class="brand-icon">b<span>·</span></span> BUTTON SYNTH <span class="brand-tag">SOUND LAB / 01</span></a><button id="mute" class="quiet" aria-pressed="false">◉ <span>Sound on</span></button></header>
   <main>
-    <div class="intro"><div><div class="eyebrow"><span class="status-dot"></span> PROCEDURAL AUDIO PLAYGROUND</div><h1>Small sounds.<br><span>Endless character.</span></h1></div><p>The feeling of a button, made from scratch.<br> Explore 57 starting points. Shape every detail.<br><span>No samples. Just synthesis.</span></p></div>
+    <div class="intro"><div><div class="eyebrow"><span class="status-dot"></span> PROCEDURAL AUDIO PLAYGROUND</div><h1>Small sounds.<br><span>Endless character.</span></h1></div><p>The feeling of a button, made from scratch.<br> Explore ${profiles.length} starting points. Shape every detail.<br><span>No samples. Just synthesis.</span></p></div>
     <div class="workspace">
-      <aside class="library panel"><div class="panel-heading"><h2>Sound library</h2><span class="badge">57</span></div><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find a sound…" aria-label="Search sounds"></label><div class="filters" role="group" aria-label="Filter sounds">${categories.map(c => `<button data-filter="${c}" class="${c === 'All' ? 'active' : ''}">${c}</button>`).join('')}</div><div class="library-count" id="result-count"></div><div id="presets" class="presets" aria-label="Sound presets"></div><div class="library-footer"><span class="small-dot"></span> Original-inspired, fully procedural</div></aside>
+      <aside class="library panel"><div class="panel-heading"><h2>Sound library</h2><span class="badge">${profiles.length}</span></div><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find a sound…" aria-label="Search sounds"></label><div class="filters" role="group" aria-label="Filter sounds">${categories.map(c => `<button data-filter="${c}" class="${c === 'All' ? 'active' : ''}">${c}</button>`).join('')}</div><div class="library-count" id="result-count"></div><div id="presets" class="presets" aria-label="Sound presets"></div><div class="library-footer"><span class="small-dot"></span> Original-inspired, fully procedural</div></aside>
       <section class="instrument panel" aria-label="Sound editor"><div class="instrument-heading"><div><div class="eyebrow" id="category"></div><h2 id="sound-name"></h2></div><span class="synth-badge">WEB AUDIO</span></div>
         <div class="audition"><div class="mode-switch" role="group" aria-label="Playback source"><button id="synth-mode" class="active" aria-pressed="true">Synthesis</button><button id="reference-mode" aria-pressed="false">Original ↗</button></div><div class="test-zone"><span class="orbit orbit-one"></span><span class="orbit orbit-two"></span><button id="pad" class="pad"><span class="pad-symbol">↓</span><span>PRESS ME</span></button></div><div class="audition-hint" id="audition-hint">Press & hold. Release to hear the return.</div><div class="audition-actions"><button id="play-pair" class="quiet">▶ Play press + release</button><span class="keyboard-hint">or focus & use <kbd>space</kbd></span></div><p class="reference-note" id="reference-note" hidden>Original recordings load from GitHub. Controls shape synthesis only.</p></div>
         <div class="scope"><div class="scope-heading"><span class="eyebrow">SIGNAL PREVIEW</span><div class="phase-switch" role="group" aria-label="Preview and export phase"><button data-phase="down">Press</button><button data-phase="up">Release</button><button data-phase="pair" class="active">Pair</button></div></div><canvas id="waveform" aria-label="Rendered synthesized waveform" role="img"></canvas><div class="scope-footer"><span id="duration">RENDERING…</span><span>48 kHz / MONO <span class="scope-separator">·</span> SEED <button id="seed" title="Generate a new deterministic preview seed">42 ↻</button></span></div></div>
@@ -93,6 +95,12 @@ function list() {
   if (!matching.length) $('#presets').textContent = 'No sounds found. Try another search.';
 }
 function sync() {
+  const game = !!selected.down.notes;
+  if (game && mode === 'reference') changeMode('synth');
+  $<HTMLButtonElement>('#reference-mode').disabled = game;
+  $('#reference-mode').title = game ? 'Original procedural game sound — no reference recording' : 'Compare with the original recording';
+  $('#reference-note').textContent = game ? 'Original chiptune preset · pulse waves, arpeggios & pitch sweeps.' : 'Original recordings load from GitHub. Controls shape synthesis only.';
+  $('#reference-note').hidden = !game && mode !== 'reference';
   $('#sound-name').textContent = title(selected);
   $('#category').textContent = `${category(selected).toUpperCase()} / ${String(profiles.indexOf(selected) + 1).padStart(2, '0')}`;
   for (const c of controls) {
@@ -243,6 +251,7 @@ $('#mute').addEventListener('click', () => {
   status(muted ? 'Playback muted. Exports keep your output level.' : 'Sound enabled.');
 });
 function changeMode(next: typeof mode) {
+  if (next === 'reference' && selected.down.notes) return;
   clearTimeout(pairTimer); release(); referenceRequest++;
   referenceSources.forEach(s => s.stop()); referenceSources.clear();
   mode = next;

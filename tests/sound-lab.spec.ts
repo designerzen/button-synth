@@ -22,7 +22,7 @@ test('every preset renders finite, bounded press and release audio; seeds reprod
     const same = a.getChannelData(0).every((v, i) => Math.abs(v - b.getChannelData(0)[i]) < 1e-6);
     const different = a.getChannelData(0).some((v, i) => v !== c.getChannelData(0)[i]);
     const wav = new DataView(encodeWav(a));
-    // Exercise the extreme controls with the longest preset and highest frequency.
+    // Exercise extreme controls across the entire library, including game phrases.
     for (const p of profiles) {
       const out = await renderSound(p, 'pair', { ...defaults, pitch: 24, decay: 3, brightness: 3, noise: 2, body: 1, snap: 1, bounce: 2, variation: .5, volume: 1 }, 7);
       if (out.getChannelData(0).some(v => !Number.isFinite(v) || Math.abs(v) > 1)) failures.push(`${p.id}: invalid extreme output`);
@@ -30,7 +30,7 @@ test('every preset renders finite, bounded press and release audio; seeds reprod
     return { failures, count: profiles.length, same, different, sampleRate: wav.getUint32(24, true), size: wav.getUint32(40, true), expectedSize: a.length * 2 };
   });
   expect(results.failures).toEqual([]);
-  expect(results.count).toBe(57);
+  expect(results.count).toBe(67);
   expect(results.same).toBe(true);
   expect(results.different).toBe(true);
   expect(results.sampleRate).toBe(48000);
@@ -66,7 +66,7 @@ test('library, parameter persistence, keyboard audition, WAV and preset round tr
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.goto('/');
-  await expect(page.locator('.preset')).toHaveCount(57);
+  await expect(page.locator('.preset')).toHaveCount(67);
   await page.getByRole('button', { name: 'Mice', exact: true }).click();
   await expect(page.locator('.preset')).toHaveCount(5);
   await page.getByRole('button', { name: 'All', exact: true }).click();

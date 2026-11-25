@@ -1,7 +1,9 @@
 import rawProfiles from './profiles.json';
+import { gameProfiles } from './game-profiles';
 
 export type Phase = 'down' | 'up';
 export interface Impact {
+  notes?: { frequency: number; at: number; duration: number; wave: OscillatorType; endFrequency?: number }[];
   modes: number[][];
   decay: number;
   brightness: number;
@@ -10,7 +12,7 @@ export interface Impact {
   level: number;
 }
 export interface Profile { id: string; name: string; samples: number; down: Impact; up: Impact }
-export const profiles: Profile[] = rawProfiles;
+export const profiles: Profile[] = [...rawProfiles, ...gameProfiles];
 export interface Parameters {
   pitch: number; decay: number; brightness: number; body: number; noise: number;
   snap: number; bounce: number; variation: number; volume: number;
@@ -49,6 +51,8 @@ function outputStage(ctx: BaseAudioContext, destination: AudioNode): GainNode {
   return input;
 }
 export function duration(profile: Profile, phase: Phase, p: Parameters) {
+  const notes = profile[phase].notes;
+  if (notes?.length) return Math.max(...notes.map(n => n.at * Math.sqrt(p.decay) + n.duration * p.decay * 1.25)) + profile[phase].bounce * p.bounce + .04;
   return Math.max(.06, profile[phase].decay * p.decay * 9 + profile[phase].bounce * p.bounce + .035);
 }
 
@@ -74,6 +78,24 @@ export function scheduleImpact(ctx: BaseAudioContext, destination: AudioNode, pr
     return gain;
   };
   const strike = (at: number, strength: number) => {
+    if (spec.notes) {
+      const filter = keep(ctx.createBiquadFilter());
+      filter.type = 'lowpass'; filter.Q.value = .7;
+      filter.frequency.value = Math.min(ctx.sampleRate * .44, spec.brightness * p.brightness);
+      const toneBus = keep(ctx.createGain()); toneBus.connect(filter).connect(bus);
+      const concurrent = Math.max(1, ...spec.notes.map(n => spec.notes!.filter(m => m.at <= n.at && m.at + m.duration > n.at).length));
+      for (const n of spec.notes) {
+        const start = at + n.at * Math.sqrt(p.decay);
+        const life = Math.max(.006, n.duration * decay / spec.decay);
+        const oscillator = keep(ctx.createOscillator()); oscillator.type = n.wave;
+        const hz = (f: number) => Math.max(30, Math.min(ctx.sampleRate * .43, f * pitch));
+        oscillator.frequency.setValueAtTime(hz(n.frequency), start);
+        if (n.endFrequency) oscillator.frequency.exponentialRampToValueAtTime(hz(n.endFrequency), start + life);
+        const gain = envelope(start, life, strength * p.body * .9 / Math.sqrt(concurrent));
+        gain.disconnect(); gain.connect(toneBus);
+        oscillator.connect(gain); oscillator.start(start); oscillator.stop(start + life + .004);
+      }
+    }
     // Inharmonic resonant modes mimic the switch cap and housing.
     const sum = spec.modes.reduce((s, m) => s + m[1], 0) || 1;
     spec.modes.forEach(([frequency, weight], i) => {
