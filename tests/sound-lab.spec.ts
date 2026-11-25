@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 test('every preset renders finite, bounded press and release audio; seeds reproduce exports', async ({ page }) => {
   await page.goto('/');
@@ -37,29 +38,38 @@ test('every preset renders finite, bounded press and release audio; seeds reprod
   expect(results.size).toBe(results.expectedSize);
 });
 
-test('reference mode loads before audition and download failures leave synthesis usable', async ({ page }) => {
+test('playback and WAV use the same selected phase and audio; synthesis needs no external requests', async ({ page }) => {
+  const external: string[] = [];
+  page.on('request', r => { if (!r.url().startsWith('http://127.0.0.1:5196')) external.push(r.url()); });
+  await page.addInitScript(() => {
+    const original = AudioBufferSourceNode.prototype.start;
+    (window as any).played = [];
+    AudioBufferSourceNode.prototype.start = function (...args: any[]) {
+      if (this.context instanceof AudioContext) (window as any).played.push(this.buffer);
+      return original.apply(this, args as [number?, number?, number?]);
+    };
+  });
   await page.goto('/');
-  const wav = await page.evaluate(async () => {
-    const { renderSound, profiles, defaults, encodeWav } = await import('/src/synth.ts');
-    return Array.from(new Uint8Array(encodeWav(await renderSound(profiles[0], 'pair', defaults))));
-  });
-  let requests = 0;
-  await page.route('https://raw.githubusercontent.com/**', async route => {
-    requests++;
-    if (requests > 1) return route.fulfill({ status: 503 });
-    await route.fulfill({ status: 200, contentType: 'audio/wav', body: Buffer.from(wav) });
-  });
-  await page.locator('#reference-mode').click();
-  await expect(page.locator('#status')).toContainText('Original reference ready');
-  await expect(page.locator('#pad')).toBeEnabled();
-  await page.locator('#play-pair').click();
-  await expect(page.locator('#status')).toContainText('Playing original');
-  await page.locator('.preset').first().click();
-  await expect(page.locator('#status')).toContainText('Could not load original');
-  await page.locator('#synth-mode').click();
-  await expect(page.locator('#pad')).toBeEnabled();
-  await page.locator('#play-pair').click();
-  await expect(page.locator('#status')).toContainText('procedural synthesis');
+  await expect(page.locator('#reference-mode')).toHaveCount(0);
+  await expect(page.locator('.advanced')).not.toHaveAttribute('open');
+  for (const [part, label] of [['down', 'Press'], ['up', 'Release'], ['pair', 'Both']]) {
+    await page.getByRole('button', { name: label, exact: true }).click();
+    await expect(page.locator(`[data-phase="${part}"]`)).toHaveAttribute('aria-pressed', 'true');
+    const count = await page.evaluate(() => (window as any).played.length);
+    await page.locator('#pad').focus();
+    await page.keyboard.press('Space');
+    await expect.poll(() => page.evaluate(() => (window as any).played.length)).toBe(count + 1);
+    const expected = await page.evaluate(async () => {
+      const { encodeWav } = await import('/src/synth.ts');
+      return Array.from(new Uint8Array(encodeWav((window as any).played.at(-1))));
+    });
+    const downloaded = page.waitForEvent('download');
+    await page.locator('#export').click();
+    const file = await downloaded;
+    expect(file.suggestedFilename()).toBe(`hi75-soft-${part}.wav`);
+    expect(await readFile((await file.path())!)).toEqual(Buffer.from(expected));
+  }
+  expect(external).toEqual([]);
 });
 
 test('library, parameter persistence, keyboard audition, WAV and preset round trip', async ({ page }) => {
@@ -67,9 +77,9 @@ test('library, parameter persistence, keyboard audition, WAV and preset round tr
   page.on('pageerror', e => errors.push(e.message));
   await page.goto('/');
   await expect(page.locator('.preset')).toHaveCount(67);
-  await page.getByRole('button', { name: 'Mice', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Category' }).selectOption('Mice');
   await expect(page.locator('.preset')).toHaveCount(5);
-  await page.getByRole('button', { name: 'All', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Category' }).selectOption('All');
   await page.getByRole('searchbox').fill('sd metallic');
   await expect(page.locator('.preset')).toHaveCount(1);
   await page.locator('.preset').click();
@@ -78,11 +88,14 @@ test('library, parameter persistence, keyboard audition, WAV and preset round tr
   await page.reload();
   await expect(page.locator('#pitch')).toHaveValue('7');
   await expect(page.locator('#sound-name')).toHaveText('SD Metallic');
-  await page.locator('#pad').focus();
-  await page.keyboard.down('Space');
-  await expect(page.locator('#pad')).toHaveClass(/pressed/);
-  await page.keyboard.up('Space');
-  await expect(page.locator('#pad')).not.toHaveClass(/pressed/);
+  await page.locator('[data-id="sd-metallic"]').focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('[data-id="sd-resonant"]')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#sound-name')).toHaveText('SD Resonant');
+  await expect(page.locator('[data-id="sd-resonant"]')).toBeFocused();
+  await page.locator('[data-id="sd-metallic"]').click();
+  await page.getByText('Preset & code', { exact: true }).click();
   const presetDownload = page.waitForEvent('download');
   await page.locator('#save').click();
   const preset = await presetDownload;
@@ -94,9 +107,9 @@ test('library, parameter persistence, keyboard audition, WAV and preset round tr
   const wavDownload = page.waitForEvent('download');
   await page.locator('#export').click();
   expect((await wavDownload).suggestedFilename()).toBe('sd-metallic-pair.wav');
-  await page.getByRole('button', { name: 'Sound on' }).click();
-  await page.locator('#play-pair').click();
-  await expect(page.locator('#status')).toContainText('muted');
+  await page.getByRole('button', { name: 'Mute', exact: true }).click();
+  await page.locator('#pad').click();
+  await expect(page.locator('#status')).toContainText('Unmute to play');
   expect(errors).toEqual([]);
 });
 
@@ -106,8 +119,21 @@ test('invalid imports are rejected and narrow layouts remain usable', async ({ p
   await page.locator('#import-file').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ version: 1, preset: 'hi75-soft', parameters: { pitch: 'bad' }, seed: 42 })) });
   await expect(page.locator('#status')).toContainText('Invalid pitch');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.locator('#pad').tap({ force: true }).catch(() => page.locator('#pad').click());
+  await page.getByRole('searchbox').fill('no match at all');
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page.locator('.preset')).toHaveCount(67);
   await page.screenshot({ path: '.cache/mobile.png', fullPage: true });
-  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.getByText('More controls', { exact: true }).click();
+  await page.locator('#variation').fill('0');
+  await expect(page.getByRole('button', { name: 'New variation' })).toBeDisabled();
+  await page.locator('#body').fill('.2');
+  await expect(page.locator('#body-value')).toHaveText('20%');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByText('More controls', { exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByText('Preset & code', { exact: true }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.tools')).not.toHaveAttribute('open');
+  await expect(page.locator('.tools summary')).toBeFocused();
   await page.screenshot({ path: '.cache/desktop.png', fullPage: true });
 });

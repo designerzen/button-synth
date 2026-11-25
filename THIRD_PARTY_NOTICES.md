@@ -1,6 +1,6 @@
 # Button Sounds reference material
 
-The synthesis profiles were derived by spectral and temporal analysis of recordings from https://github.com/joshwcomeau/button-sounds. Original recordings are fetched from that repository only when the user selects Original comparison mode; they are not bundled in this project.
+The synthesis profiles were derived by spectral and temporal analysis of recordings from https://github.com/joshwcomeau/button-sounds. Original recordings are downloaded only by the development analysis script; they are not bundled or fetched by the application.
 
 MIT License
 

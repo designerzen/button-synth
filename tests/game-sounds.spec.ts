@@ -4,13 +4,12 @@ test('game sounds use pitched phrases, respond to controls, and export without r
   const downloads: string[] = [];
   page.on('request', r => { if (r.url().includes('raw.githubusercontent.com')) downloads.push(r.url()); });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Game sounds', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Category' }).selectOption('Game sounds');
   await expect(page.locator('.preset')).toHaveCount(10);
   await page.locator('[data-id="game-coin-pickup"]').click();
   await expect(page.locator('#sound-name')).toHaveText('Coin Pickup');
-  await expect(page.locator('#reference-mode')).toBeDisabled();
-  await page.locator('#play-pair').click();
-  await expect(page.locator('#status')).toContainText('procedural synthesis');
+  await expect(page.locator('#reference-mode')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Play sound', exact: true }).click();
   const result = await page.evaluate(async () => {
     const { profiles, defaults, renderSound } = await import('/src/synth.ts');
     const p = profiles.find(p => p.id === 'game-coin-pickup')!;
@@ -31,8 +30,7 @@ test('game sounds use pitched phrases, respond to controls, and export without r
   const file = page.waitForEvent('download');
   await page.locator('#export').click();
   expect((await file).suggestedFilename()).toBe('game-coin-pickup-pair.wav');
-  await page.getByRole('button', { name: 'All', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Category' }).selectOption('All');
   await page.locator('[data-id="hi75-soft"]').click();
-  await expect(page.locator('#reference-mode')).toBeEnabled();
   expect(downloads).toEqual([]);
 });

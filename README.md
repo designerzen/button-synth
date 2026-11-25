@@ -21,12 +21,10 @@ Open the local address printed by Vite. `pnpm build` type-checks and creates `di
 
 ## Sound lab
 
-- Select a preset, then press and hold the large button. Press and release produce separate sounds. Space and Enter work when the button has focus.
-- Adjust pitch, decay, brightness, body, noise texture, transient snap, mechanical bounce, variation, and output level. Bounce affects presets with a detected secondary impact, or adds a short echo to game cues. Controls apply to both press and release profiles.
-- Switch to **Original** for A/B comparison. This downloads the selected recording from GitHub and auditions its first press/release pair. Synthesis needs no recordings or network connection once the app is loaded. Network failures leave synthesis available.
-- Select Press, Release, or Pair above the waveform to choose the preview and WAV export. Pair uses a 200 ms hold. The waveform seed gives repeatable procedural excitation; the seed button changes it. Native Web Audio implementations can have tiny floating point differences.
-- WAV exports are mono, 48 kHz, 16-bit PCM. They always contain the synthesized sound, including when Original mode is selected. Mute controls audition playback; exports retain the chosen output level.
-- Settings are saved per preset in browser storage. Save/Import JSON transfers settings and seed. Reset restores the selected sound’s controls. Copy code provides an integration snippet for this repository’s engine.
+- Search or filter the sound list, select a sound, and choose **Play sound**. Space and Enter work when the button has focus. Choose Press, Release, or Both for both playback and download; Both uses a 200 ms hold.
+- Pitch, Length, Brightness, and Volume are immediately available. **More controls** reveals Body, Texture, Snap, Bounce, Variation, and **New variation**. Bounce affects detected secondary impacts or the echo in game cues. Controls apply to both press and release profiles.
+- **Download WAV** exports exactly the rendered audio used for playback: mono, 48 kHz, 16-bit PCM. Playback repeats the current variation; **New variation** creates another repeatable version. No recordings, comparison mode, or external network requests are involved. Native Web Audio implementations can have tiny floating point differences.
+- Settings are saved per sound in browser storage. **Reset** restores defaults. Under **Preset & code**, Save/Import preset transfers settings and seed, and Copy code provides an integration snippet for this repository’s engine. Mute affects playback; downloads retain the chosen volume.
 
 ## Reuse the engine
 
