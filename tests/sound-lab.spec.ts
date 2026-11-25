@@ -137,3 +137,23 @@ test('invalid imports are rejected and narrow layouts remain usable', async ({ p
   await expect(page.locator('.tools summary')).toBeFocused();
   await page.screenshot({ path: '.cache/desktop.png', fullPage: true });
 });
+
+test('pointer press plays down and release plays up even when released off the pad', async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = AudioBufferSourceNode.prototype.start;
+    (window as any).played = [];
+    AudioBufferSourceNode.prototype.start = function (...args: any[]) {
+      if (this.context instanceof AudioContext) (window as any).played.push(this.buffer);
+      return original.apply(this, args as [number?, number?, number?]);
+    };
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Both', exact: true }).click();
+  const box = (await page.locator('#pad').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect.poll(() => page.evaluate(() => (window as any).played.length)).toBe(1);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height + 200);
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => (window as any).played.length)).toBe(2);
+});

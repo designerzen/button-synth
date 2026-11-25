@@ -9,7 +9,8 @@ let saved: Record<string, Parameters> = {};
 let muted = false, filter = 'All', query = '';
 let phase: Phase | 'pair' = 'pair', seed = 42;
 let audio: AudioContext | undefined, source: AudioBufferSourceNode | undefined;
-let rendered: Promise<AudioBuffer> | undefined, playRevision = 0, playing = false;
+const rendered = new Map<string, Promise<AudioBuffer>>();
+let playRevision = 0, playing = false;
 
 try {
   const state = JSON.parse(localStorage.getItem(storageKey) || '{}');
@@ -91,7 +92,7 @@ function list() {
     button.innerHTML = `<span>${title(p)}</span>${p.id === selected.id ? checkIcon : ''}`;
     button.addEventListener('click', () => {
       stopPlayback(); selected = p; params = { ...(saved[p.id] || defaults) };
-      seed = 42; rendered = undefined; status(); persist(); sync();
+      seed = 42; rendered.clear(); status(); persist(); sync();
       $<HTMLButtonElement>(`.preset[data-id="${p.id}"]`).focus({ preventScroll: true });
     });
     return button;
@@ -130,15 +131,31 @@ function stopPlayback() {
   if (source) { source.onended = null; source.stop(); source.disconnect(); source = undefined; }
   $('#pad').innerHTML = `${playIcon}<span>Play sound</span>`; $('#pad').setAttribute('aria-label', 'Play sound');
 }
-function invalidate() { rendered = undefined; stopPlayback(); status(); updateSummary(); }
-function getSound() {
-  if (!rendered) {
-    const pending = renderSound(selected, phase, { ...params }, seed); rendered = pending;
-    void pending.catch(() => { if (rendered === pending) rendered = undefined; });
+function invalidate() { rendered.clear(); stopPlayback(); status(); updateSummary(); }
+function getSound(part: Phase | 'pair' = phase) {
+  let pending = rendered.get(part);
+  if (!pending) {
+    const next = pending = renderSound(selected, part, { ...params }, seed); rendered.set(part, next);
+    void next.catch(() => { if (rendered.get(part) === next) rendered.delete(part); });
   }
-  return rendered;
+  return pending;
 }
-$('#pad').addEventListener('click', async () => {
+// A pointer press plays the down sound, then a one-shot window listener plays the up sound,
+// so the pair stays linked even if the pointer drifts off the pad before release.
+let pointerPress = false;
+async function playPart(part: Phase) {
+  audio ||= new AudioContext(); await audio.resume();
+  const node = audio.createBufferSource(); node.buffer = await getSound(part); node.connect(audio.destination); node.start();
+}
+$('#pad').addEventListener('pointerdown', e => {
+  if (phase !== 'pair' || muted || playing || e.button !== 0) return;
+  pointerPress = true;
+  window.addEventListener('pointerup', () => { void playPart('up').catch(() => {}); }, { once: true });
+  playPart('down').catch(error => status(`Playback failed: ${(error as Error).message}`));
+});
+$('#pad').addEventListener('click', async e => {
+  if (pointerPress && e.detail > 0) { pointerPress = false; return; }
+  pointerPress = false;
   if (playing) { stopPlayback(); status(); return; }
   if (muted) { status('Unmute to play.'); return; }
   const revision = ++playRevision;
