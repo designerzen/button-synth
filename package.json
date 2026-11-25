@@ -1,0 +1,18 @@
+{
+  "name": "button-synth",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.15.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "test": "playwright test",
+    "analyze": "python scripts/analyze.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.2"
+  }
+}
