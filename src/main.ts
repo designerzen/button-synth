@@ -55,7 +55,7 @@ function controlMarkup(c: typeof controls[number]) {
 }
 
 $('#app').innerHTML = `
-  <header class="app-header"><h1>Button Synth</h1><button id="mute" class="text-button" aria-pressed="false">Mute</button></header>
+  <header class="app-header"><h1>Button Synth</h1><div class="header-actions"><button id="theme" class="text-button" aria-label="Switch theme"></button><button id="mute" class="text-button" aria-pressed="false">Mute</button></div></header>
   <main class="workspace">
     <aside class="library" aria-label="Choose a sound">
       <label class="sr-only" for="search">Search sounds</label><input id="search" type="search" placeholder="Search sounds" autocomplete="off">
@@ -64,10 +64,10 @@ $('#app').innerHTML = `
     </aside>
     <section class="editor" aria-labelledby="sound-name">
       <div class="selection"><div><p id="category" class="category"></p><h2 id="sound-name"></h2></div><button id="reset" class="text-button">Reset</button></div>
-      <div class="playback"><button id="pad" class="play-button" aria-label="Play sound">${playIcon}<span>Play sound</span></button><div class="phase-switch" role="group" aria-label="Sound part">${([['down', 'Press'], ['up', 'Release'], ['pair', 'Both']] as const).map(([value, label]) => `<button data-phase="${value}" aria-pressed="${value === phase}">${label}</button>`).join('')}</div></div>
+      <div class="stage"><div class="pad-well"><button id="pad" class="pad" aria-label="Play sound">${playIcon}<span>Play sound</span></button></div><div class="scope"><canvas id="waveform" role="img" aria-label="Waveform of the rendered sound"></canvas><div class="scope-bar"><div class="phase-switch" role="group" aria-label="Sound part">${([['down', 'Press'], ['up', 'Release'], ['pair', 'Both']] as const).map(([value, label]) => `<button data-phase="${value}" aria-pressed="${value === phase}">${label}</button>`).join('')}</div><span id="duration" class="duration"></span></div></div></div>
       <div class="controls">${controls.slice(0, 4).map(controlMarkup).join('')}</div>
       <details class="advanced"><summary>More controls</summary><div class="controls">${controls.slice(4).map(controlMarkup).join('')}</div><button id="seed" class="secondary-button">New variation</button></details>
-      <div class="export-row"><button id="export" class="download-button">${icon('<path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4"/>')}Download WAV</button><span id="duration" class="duration"></span><details class="tools"><summary>Preset & code</summary><div class="tool-menu"><button id="save">Save preset</button><button id="import">Import preset</button><button id="code">Copy code</button></div></details></div>
+      <div class="export-row"><button id="export" class="download-button">${icon('<path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4"/>')}Download WAV</button><details class="tools"><summary>Preset & code</summary><div class="tool-menu"><button id="save">Save preset</button><button id="import">Import preset</button><button id="code">Copy code</button></div></details></div>
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </section>
   </main>
@@ -106,7 +106,54 @@ function list() {
 function clearFilters() {
   filter = 'All'; query = ''; $<HTMLInputElement>('#search').value = ''; $<HTMLSelectElement>('#category-filter').value = 'All'; list();
 }
+let wave: AudioBuffer | undefined, waveRevision = 0, waveTimer: ReturnType<typeof setTimeout>;
+let head: { start: number; offset: number } | undefined, frame = 0;
+const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const playheadSeconds = () => head ? head.offset + (performance.now() - head.start) / 1000 : -1;
+function drawWave() {
+  const canvas = $<HTMLCanvasElement>('#waveform'), dpr = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  if (!width || !height) return;
+  if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) { canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr); }
+  const ctx = canvas.getContext('2d')!; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, width, height);
+  ctx.strokeStyle = cssVar('--scope-grid'); ctx.lineWidth = 1;
+  ctx.beginPath(); for (let x = 0; x < width; x += 28) { ctx.moveTo(x + .5, 0); ctx.lineTo(x + .5, height); } ctx.moveTo(0, height / 2); ctx.lineTo(width, height / 2); ctx.stroke();
+  if (!wave) return;
+  const data = wave.getChannelData(0), played = head ? Math.min(width, playheadSeconds() / wave.duration * width) : 0;
+  const dim = cssVar('--scope-dim'), lit = cssVar('--scope-wave');
+  for (let x = 0; x < width; x++) {
+    const from = Math.floor(x * data.length / width), to = Math.max(from + 1, Math.floor((x + 1) * data.length / width));
+    let low = 0, high = 0;
+    for (let i = from; i < to; i++) { low = Math.min(low, data[i]); high = Math.max(high, data[i]); }
+    const scale = height * 2.6;
+    ctx.strokeStyle = x <= played ? lit : dim;
+    ctx.beginPath(); ctx.moveTo(x + .5, height / 2 + Math.max(-height / 2, low * scale)); ctx.lineTo(x + .5, height / 2 + Math.min(height / 2, high * scale) + .5); ctx.stroke();
+  }
+  if (phase === 'pair') {
+    const x = .205 / wave.duration * width;
+    ctx.setLineDash([3, 4]); ctx.strokeStyle = cssVar('--scope-mark'); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); ctx.setLineDash([]);
+  }
+  if (head && played < width) { ctx.strokeStyle = cssVar('--scope-head'); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(played, 0); ctx.lineTo(played, height); ctx.stroke(); }
+}
+function showWave() {
+  const revision = ++waveRevision; clearTimeout(waveTimer);
+  waveTimer = setTimeout(() => {
+    getSound().then(buffer => { if (revision === waveRevision) { wave = buffer; drawWave(); } }).catch(() => {});
+  }, 60);
+}
+function runPlayhead(offset = 0) {
+  head = { start: performance.now(), offset }; cancelAnimationFrame(frame);
+  const tick = () => {
+    drawWave();
+    if (head && wave && playheadSeconds() < wave.duration) frame = requestAnimationFrame(tick);
+    else { head = undefined; drawWave(); }
+  };
+  frame = requestAnimationFrame(tick);
+}
+function endPlayhead() { head = undefined; cancelAnimationFrame(frame); drawWave(); }
+new ResizeObserver(drawWave).observe($('#waveform'));
 function updateSummary() {
+  showWave();
   const seconds = (phase === 'pair' ? Math.max(duration(selected, 'down', params), .2 + duration(selected, 'up', params)) : duration(selected, phase, params)) + .04;
   $('#duration').textContent = `${seconds.toFixed(2)} s`;
   $<HTMLButtonElement>('#reset').disabled = controls.every(c => params[c.key] === defaults[c.key]) && seed === 42;
@@ -127,7 +174,7 @@ function sync() {
   }
 }
 function stopPlayback() {
-  playRevision++; playing = false;
+  playRevision++; playing = false; endPlayhead(); $('#pad').classList.remove('pressed');
   if (source) { source.onended = null; source.stop(); source.disconnect(); source = undefined; }
   $('#pad').innerHTML = `${playIcon}<span>Play sound</span>`; $('#pad').setAttribute('aria-label', 'Play sound');
 }
@@ -143,14 +190,22 @@ function getSound(part: Phase | 'pair' = phase) {
 // A pointer press plays the down sound, then a one-shot window listener plays the up sound,
 // so the pair stays linked even if the pointer drifts off the pad before release.
 let pointerPress = false;
-async function playPart(part: Phase) {
+async function playPart(part: Phase, level = 1) {
   audio ||= new AudioContext(); await audio.resume();
-  const node = audio.createBufferSource(); node.buffer = await getSound(part); node.connect(audio.destination); node.start();
+  const node = audio.createBufferSource(), gain = audio.createGain();
+  node.buffer = await getSound(part); gain.gain.value = level; node.connect(gain).connect(audio.destination); node.start();
 }
+// Dwell time nudges the release level: a quick tap is up to 20% quieter than a held press (full level from 400 ms).
+const dwellLevel = (ms: number) => .8 + .2 * Math.min(1, ms / 400);
 $('#pad').addEventListener('pointerdown', e => {
   if (phase !== 'pair' || muted || playing || e.button !== 0) return;
   pointerPress = true;
-  window.addEventListener('pointerup', () => { void playPart('up').catch(() => {}); }, { once: true });
+  const pressedAt = performance.now(), pad = $('#pad');
+  pad.classList.add('pressed'); runPlayhead();
+  window.addEventListener('pointerup', () => {
+    pad.classList.remove('pressed'); runPlayhead(.2);
+    void playPart('up', dwellLevel(performance.now() - pressedAt)).catch(() => {});
+  }, { once: true });
   playPart('down').catch(error => status(`Playback failed: ${(error as Error).message}`));
 });
 $('#pad').addEventListener('click', async e => {
@@ -159,7 +214,7 @@ $('#pad').addEventListener('click', async e => {
   if (playing) { stopPlayback(); status(); return; }
   if (muted) { status('Unmute to play.'); return; }
   const revision = ++playRevision;
-  playing = true; $('#pad').innerHTML = `${stopIcon}<span>Stop</span>`; $('#pad').setAttribute('aria-label', 'Stop playback');
+  playing = true; $('#pad').classList.add('pressed'); $('#pad').innerHTML = `${stopIcon}<span>Stop</span>`; $('#pad').setAttribute('aria-label', 'Stop playback');
   try {
     audio ||= new AudioContext();
     await audio.resume();
@@ -168,7 +223,7 @@ $('#pad').addEventListener('click', async e => {
     if (revision !== playRevision) return;
     source = audio.createBufferSource(); source.buffer = buffer; source.connect(audio.destination);
     source.onended = () => { if (revision === playRevision) stopPlayback(); };
-    source.start(); status();
+    source.start(); runPlayhead(); status();
   } catch (error) { if (revision === playRevision) { stopPlayback(); status(`Playback failed: ${(error as Error).message}`); } }
 });
 for (const c of controls) $(`#${c.key}`).addEventListener('input', e => {
@@ -244,4 +299,17 @@ $('#code').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(code); status('Code copied.'); }
   catch { download(new Blob([code], { type: 'text/javascript' }), 'button-synth-example.ts'); status('Code downloaded.'); }
 });
+const themeButton = $('#theme');
+function applyTheme(theme: string) {
+  document.documentElement.dataset.theme = theme;
+  themeButton.textContent = theme === 'dark' ? 'Light' : 'Dark';
+  drawWave();
+}
+let theme = 'dark';
+try { theme = localStorage.getItem('button-synth-theme') || 'dark'; } catch { /* Theme choice is optional. */ }
+themeButton.addEventListener('click', () => {
+  theme = theme === 'dark' ? 'light' : 'dark'; applyTheme(theme);
+  try { localStorage.setItem('button-synth-theme', theme); } catch { /* Not persisted. */ }
+});
+applyTheme(theme);
 sync();
