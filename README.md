@@ -4,7 +4,7 @@ A procedural Web Audio sound lab inspired by [Josh Comeau’s Button Sounds](htt
 
 **[Open the live sound lab](https://designerzen.github.io/button-synth/)**
 
-The **Game sounds** category adds 10 original procedural cues for classic arcade and console interfaces: 8-bit Select, Arcade Confirm, Menu Back, Menu Error, Coin Pickup, Game Start, Power Up, Pause Blip, Console Confirm, and Pixel Toggle. These use square, triangle, sawtooth, and sine oscillators with authored note sequences, chords, and pitch sweeps. They have separate release cues and support all shaping controls, JSON presets, and WAV exports. They do not have reference recordings. There are 67 presets in total.
+The **Game sounds** category adds 10 original procedural cues for classic arcade and console interfaces: 8-bit Select, Arcade Confirm, Menu Back, Menu Error, Coin Pickup, Game Start, Power Up, Pause Blip, Console Confirm, and Pixel Toggle. These use square, triangle, sawtooth, and sine oscillators with authored note sequences, chords, and pitch sweeps. They have separate release cues and support all shaping controls, JSON presets, and WAV exports. They do not have reference recordings. Three more categories add 18 cues: **Space** (Laser Zap, Warp Drive, Sonar Ping, Airlock, Tractor Beam, Alien Chirp), **8-bit** (Jump, Blip, Hit, Arpeggio, Level Up, Game Over) and **Random** (Glitch Burst, Data Scramble, Bleep Bloop, Static Pop, Wobble Trill, Chaos Chime). The random cues come from a fixed-seed generator, so they sound chaotic but are identical on every load. There are 85 presets in total.
 
 ## GitHub Pages
 

@@ -31,7 +31,7 @@ test('every preset renders finite, bounded press and release audio; seeds reprod
     return { failures, count: profiles.length, same, different, sampleRate: wav.getUint32(24, true), size: wav.getUint32(40, true), expectedSize: a.length * 2 };
   });
   expect(results.failures).toEqual([]);
-  expect(results.count).toBe(67);
+  expect(results.count).toBe(85);
   expect(results.same).toBe(true);
   expect(results.different).toBe(true);
   expect(results.sampleRate).toBe(48000);
@@ -76,7 +76,7 @@ test('library, parameter persistence, keyboard audition, WAV and preset round tr
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.goto('/');
-  await expect(page.locator('.preset')).toHaveCount(67);
+  await expect(page.locator('.preset')).toHaveCount(85);
   await page.getByRole('combobox', { name: 'Category' }).selectOption('Mice');
   await expect(page.locator('.preset')).toHaveCount(5);
   await page.getByRole('combobox', { name: 'Category' }).selectOption('All');
@@ -121,7 +121,7 @@ test('invalid imports are rejected and narrow layouts remain usable', async ({ p
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('searchbox').fill('no match at all');
   await page.getByRole('button', { name: 'Clear filters' }).click();
-  await expect(page.locator('.preset')).toHaveCount(67);
+  await expect(page.locator('.preset')).toHaveCount(85);
   await page.screenshot({ path: '.cache/mobile.png', fullPage: true });
   await page.getByText('More controls', { exact: true }).click();
   await page.locator('#variation').fill('0');

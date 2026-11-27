@@ -5,7 +5,7 @@ test('game sounds use pitched phrases, respond to controls, and export without r
   page.on('request', r => { if (r.url().includes('raw.githubusercontent.com')) downloads.push(r.url()); });
   await page.goto('/');
   await page.getByRole('combobox', { name: 'Category' }).selectOption('Game sounds');
-  await expect(page.locator('.preset')).toHaveCount(10);
+  await expect(page.locator('.preset')).toHaveCount(9);
   await page.locator('[data-id="game-coin-pickup"]').click();
   await expect(page.locator('#sound-name')).toHaveText('Coin Pickup');
   await expect(page.locator('#reference-mode')).toHaveCount(0);

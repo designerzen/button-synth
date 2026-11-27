@@ -21,8 +21,11 @@ try {
   params = { ...(saved[selected.id] || defaults) };
 } catch { /* Storage is optional; the instrument still works without it. */ }
 
-const categories = ['All', 'Game sounds', 'Keyboards', 'Mice', 'Switches', 'Controllers', 'Electronic'];
+const categories = ['All', 'Game sounds', 'Space', '8-bit', 'Random', 'Keyboards', 'Mice', 'Switches', 'Controllers', 'Electronic'];
 function category(p: Profile) {
+  if (/^game-space/.test(p.id)) return 'Space';
+  if (/^game-8bit/.test(p.id)) return '8-bit';
+  if (/^game-random/.test(p.id)) return 'Random';
   if (p.down.notes) return 'Game sounds';
   if (/kbd|halo|hi75|uhk/.test(p.id)) return 'Keyboards';
   if (/mouse|ergo|master|rival/.test(p.id)) return 'Mice';
@@ -109,7 +112,7 @@ function clearFilters() {
 let wave: AudioBuffer | undefined, waveRevision = 0, waveTimer: ReturnType<typeof setTimeout>;
 let head: { start: number; offset: number } | undefined, frame = 0;
 const cssVar = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const playheadSeconds = () => head ? head.offset + (performance.now() - head.start) / 1000 : -1;
+const playheadSeconds = () => head ? head.offset + Math.max(0, performance.now() - head.start) / 1000 : -1;
 function drawWave() {
   const canvas = $<HTMLCanvasElement>('#waveform'), dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth, height = canvas.clientHeight;
@@ -141,8 +144,9 @@ function showWave() {
     getSound().then(buffer => { if (revision === waveRevision) { wave = buffer; drawWave(); } }).catch(() => {});
   }, 60);
 }
-function runPlayhead(offset = 0) {
-  head = { start: performance.now(), offset }; cancelAnimationFrame(frame);
+// `delay` is the time until the sound is actually audible, so the playhead never leads the audio.
+function runPlayhead(offset = 0, delay = 0) {
+  head = { start: performance.now() + delay * 1000, offset }; cancelAnimationFrame(frame);
   const tick = () => {
     drawWave();
     if (head && wave && playheadSeconds() < wave.duration) frame = requestAnimationFrame(tick);
@@ -190,10 +194,11 @@ function getSound(part: Phase | 'pair' = phase) {
 // A pointer press plays the down sound, then a one-shot window listener plays the up sound,
 // so the pair stays linked even if the pointer drifts off the pad before release.
 let pointerPress = false;
-async function playPart(part: Phase, level = 1) {
+async function playPart(part: Phase, level = 1, offset = 0) {
   audio ||= new AudioContext(); await audio.resume();
   const node = audio.createBufferSource(), gain = audio.createGain();
-  node.buffer = await getSound(part); gain.gain.value = level; node.connect(gain).connect(audio.destination); node.start();
+  node.buffer = await getSound(part); gain.gain.value = level; node.connect(gain).connect(audio.destination);
+  node.start(); runPlayhead(offset, audio.baseLatency + (audio.outputLatency || 0));
 }
 // Dwell time nudges the release level: a quick tap is up to 20% quieter than a held press (full level from 400 ms).
 const dwellLevel = (ms: number) => .8 + .2 * Math.min(1, ms / 400);
@@ -201,10 +206,10 @@ $('#pad').addEventListener('pointerdown', e => {
   if (phase !== 'pair' || muted || playing || e.button !== 0) return;
   pointerPress = true;
   const pressedAt = performance.now(), pad = $('#pad');
-  pad.classList.add('pressed'); runPlayhead();
+  pad.classList.add('pressed');
   window.addEventListener('pointerup', () => {
-    pad.classList.remove('pressed'); runPlayhead(.2);
-    void playPart('up', dwellLevel(performance.now() - pressedAt)).catch(() => {});
+    pad.classList.remove('pressed');
+    void playPart('up', dwellLevel(performance.now() - pressedAt), .2).catch(() => {});
   }, { once: true });
   playPart('down').catch(error => status(`Playback failed: ${(error as Error).message}`));
 });
@@ -223,7 +228,7 @@ $('#pad').addEventListener('click', async e => {
     if (revision !== playRevision) return;
     source = audio.createBufferSource(); source.buffer = buffer; source.connect(audio.destination);
     source.onended = () => { if (revision === playRevision) stopPlayback(); };
-    source.start(); runPlayhead(); status();
+    source.start(); runPlayhead(0, audio.baseLatency + (audio.outputLatency || 0)); status();
   } catch (error) { if (revision === playRevision) { stopPlayback(); status(`Playback failed: ${(error as Error).message}`); } }
 });
 for (const c of controls) $(`#${c.key}`).addEventListener('input', e => {
